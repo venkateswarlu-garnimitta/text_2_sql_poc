@@ -18,3 +18,4 @@ plotly
 reportlab
 markdown
 xlsxwriter
+WeasyPrint

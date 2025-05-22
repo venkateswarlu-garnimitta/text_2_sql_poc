@@ -16,7 +16,7 @@ import io # Added for excel export
 
 # Import agents and database functions
 from agents.schema_loader_agent import SchemaLoaderAgent
-from agents.selector_agent import SelectorAgent
+from agents.selector_agent_2 import SelectorAgent
 from agents.decomposer_agent import DecomposerAgent
 from agents.refiner_agent import RefinerAgent
 from agents.visualization_agent import VisualizationAgent
@@ -106,6 +106,15 @@ if 'data_insights' not in st.session_state:
 if 'total_time' not in st.session_state:
     st.session_state.total_time = 0.0
 
+if 'selector_agent' not in st.session_state:
+    st.session_state.selector_agent = SelectorAgent(max_memory=4)
+
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+import numpy as np
+import re
 
 def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
     """
@@ -148,10 +157,13 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
         formatted_value = value / divisor
 
         if for_chart_axis_label:
+            # This is for axis labels, often scaled and abbreviated
             return f"{formatted_value:,.1f}{suffix}"
         elif for_chart_hover:
+            # This is for detailed hover info, usually full value
             return f"{value:,.2f} AED"
         else:
+            # This is for table display or direct bar text when not specifically for axis/hover
             if formatted_value == int(formatted_value):
                 return f"{int(formatted_value):,}{suffix} "
             else:
@@ -210,9 +222,9 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
         else:
             df_display[col] = df_display[col].apply(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) and x != int(x) else (f"{int(x):,}" if isinstance(x, (int, float)) else x))
 
-    # Common font settings for bold black labels (applied where possible)
-    label_font_settings = dict(family="Arial, sans-serif", size=12, color="black") # General label font
-    title_font_settings = dict(family="Arial Black, sans-serif", size=16, color="black") # Title font (bolder)
+    # Common font settings for bold black labels
+    label_font_settings = dict(family="Arial, sans-serif", size=12, color="black")
+    title_font_settings = dict(family="Arial Black, sans-serif", size=16, color="black")
 
 
     if vis_type == "Table":
@@ -231,61 +243,71 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
             if x_col and y_col:
                 grouped_data = df_processed.groupby(x_col)[y_col].sum().reset_index()
                 fig = px.bar(
-                    grouped_data, x=x_col, y=y_col, title=f"{y_col} by {x_col}",
+                    grouped_data, x=x_col, y=y_col,
                     width=graph_width, height=graph_height, color=x_col,
-                    color_discrete_sequence=px.colors.qualitative.Bold, text_auto=False
+                    color_discrete_sequence=px.colors.qualitative.Bold
                 )
-                y_axis_title = f"{y_col} (AED)" if y_col in currency_like_cols else y_col
-                fig.update_layout(
-    title=dict(
-        text=f"{y_col} by {x_col}",
-        font=dict(color="black", size=18)
-    ),
-    font=dict(color="black", size=12),  # Applies to ticks, legend
-    xaxis=dict(
-        title=dict(text=x_col, font=dict(color="black", size=14)),
-        tickfont=dict(color="black"),
-    ),
-    yaxis=dict(
-        title=dict(text=y_axis_title, font=dict(color="black", size=14)),
-        tickfont=dict(color="black"),
-    ),
-    legend=dict(
-        font=dict(color="black", size=12)
-    ),
-    hoverlabel=dict(
-        font=dict(color="black")
-    ),
-    template="plotly_white",
-    plot_bgcolor='rgba(240,240,250,0.2)',
-    paper_bgcolor='white',
-    bargap=0.2,
-    bargroupgap=0.1,
-    hovermode="x unified",
-    title_x=0.5
-)
 
+                y_axis_title = f"{y_col} (AED)" if y_col in currency_like_cols else y_col
+                bar_count = grouped_data.shape[0]
+                bargap_value = 0.5 if bar_count < 6 else 0.2
+
+
+                fig.update_layout(
+                    title=dict(
+                        text=f"Total {y_col} by {x_col}",
+                        font=title_font_settings
+                    ),
+                    font=label_font_settings,
+                    xaxis=dict(
+                        title=dict(text=x_col, font=dict(color="black", size=14)),
+                        tickfont=dict(color="black"),
+                    ),
+                    yaxis=dict(
+                        title=dict(text=y_axis_title, font=dict(color="black", size=14)),
+                        tickfont=dict(color="black"),
+                        gridcolor='rgba(200,200,200,0.2)'
+                    ),
+                    legend=dict(
+                        title=dict(text=x_col, font=dict(color="black", size=12)),
+                        font=dict(color="black", size=12)
+                    ),
+                    hoverlabel=dict(
+                        font=dict(color="black")
+                    ),
+                    template="plotly_white",
+                    plot_bgcolor='rgba(240,240,250,0.2)',
+                    paper_bgcolor='white',
+
+                    # 👇 INCREASE bargap to reduce bar width
+                           # Try 0.4–0.6 for narrower bars
+                    bargroupgap=0.3,
+                    bargap=bargap_value,
+
+                    hovermode="x unified",
+                    title_x=0.5
+                )
+
+
+                # --- HOVER TEMPLATE ONLY (NO TEXT ON BARS) ---
                 if y_col in currency_like_cols:
-                    fig.update_yaxes(tickformat=".2s", hoverformat=",.2f", gridcolor='rgba(200,200,200,0.2)', title=y_axis_title, tickfont=dict(color="black"))
-                    fig.update_traces(
-                        text=[format_aed_currency(val, for_chart_axis_label=True) for val in grouped_data[y_col]],
-                        textposition='outside', textfont=dict(size=10, color='black'),
-                        customdata=[format_aed_currency(x, for_chart_hover=True) for x in grouped_data[y_col]],
-                        hovertemplate=f"<b>%{{x}}</b><br>{y_col}: %{{customdata}}<extra></extra>"
-                    )
+                    hovertemplate = f"<b>%{{x}}</b><br>{y_col}: %{{y:,.2f}} AED<extra></extra>"
+                    fig.update_yaxes(tickformat=".2s", hoverformat=",.2f")
                 else:
-                    fig.update_yaxes(tickformat=",.2f", gridcolor='rgba(200,200,200,0.2)', tickfont=dict(color="black"))
-                    fig.update_traces(
-                        text=[f"{val:,.1f}" for val in grouped_data[y_col]],
-                        textposition='outside', textfont=dict(size=10, color='black'),
-                        hovertemplate=f"<b>%{{x}}</b><br>{y_col}: %{{y:,.2f}}<extra></extra>"
-                    )
-                fig.update_xaxes(tickfont=dict(color="black"))
+                    hovertemplate = f"<b>%{{x}}</b><br>{y_col}: %{{y:,.2f}}<extra></extra>"
+                    fig.update_yaxes(tickformat=",.2f")
+
+                fig.update_traces(
+                    text=None,  # ✅ REMOVE text labels on bars
+                    hovertemplate=hovertemplate
+                )
+
                 st.plotly_chart(fig)
             else:
                 st.error("Please select both X and Y columns.")
         else:
             st.error("Bar chart requires at least one categorical and one numeric column.")
+
 
     elif vis_type == "Line Chart":
         datetime_cols = df_processed.select_dtypes(include=['datetime64[ns]']).columns
@@ -317,9 +339,9 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
                     title_text=f"Line Chart: {', '.join(y_cols)} over {x_col}", title_font=title_font_settings,
                     xaxis_title=x_col, yaxis_title=y_axis_title,
                     width=graph_width, height=graph_height,
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor='rgba(255,255,255,0.5)', bordercolor='rgba(0,0,0,0.1)', borderwidth=1),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, bgcolor='rgba(255,255,255,0.5)', bordercolor='rgba(0,0,0,0.1)', borderwidth=1, font=dict(color="black")), # Legend text black
                     hovermode="x unified", template="plotly_white", title_x=0.5,
-                    font=label_font_settings,
+                    font=label_font_settings, # Applies to ticks, legend
                     xaxis_title_font=dict(color="black", size=14),
                     yaxis_title_font=dict(color="black", size=14),
                     plot_bgcolor='rgba(240,240,250,0.2)', paper_bgcolor='white'
@@ -328,7 +350,7 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
                     fig.update_yaxes(tickformat=".2s", hoverformat=",.2f", gridcolor='rgba(200,200,200,0.2)', zeroline=True, zerolinecolor='rgba(0,0,0,0.2)', zerolinewidth=1, title=y_axis_title, tickfont=dict(color="black"))
                 else:
                     fig.update_yaxes(tickformat=",.2f", gridcolor='rgba(200,200,200,0.2)', zeroline=True, zerolinecolor='rgba(0,0,0,0.2)', zerolinewidth=1, tickfont=dict(color="black"))
-                
+
                 fig.update_xaxes(tickfont=dict(color="black"))
 
                 for i, trace in enumerate(fig.data):
@@ -367,11 +389,11 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
                     title_font=title_font_settings,
                     xaxis_title=x_axis_title, yaxis_title=y_axis_title,
                     hovermode="closest", title_x=0.5,
-                    font=label_font_settings,
+                    font=label_font_settings, # Applies to ticks, legend
                     xaxis_title_font=dict(color="black", size=14),
                     yaxis_title_font=dict(color="black", size=14),
                     plot_bgcolor='rgba(240,240,250,0.2)', paper_bgcolor='white',
-                    legend=dict(bgcolor='rgba(255,255,255,0.5)', bordercolor='rgba(0,0,0,0.1)', borderwidth=1) if color_option else None
+                    legend=dict(bgcolor='rgba(255,255,255,0.5)', bordercolor='rgba(0,0,0,0.1)', borderwidth=1, font=dict(color="black")) if color_option else None # Legend text black
                 )
                 if x_col in currency_like_cols:
                     fig.update_xaxes(tickformat=".2s", hoverformat=",.2f", gridcolor='rgba(200,200,200,0.2)', zeroline=True, zerolinecolor='rgba(0,0,0,0.2)', zerolinewidth=1, title=x_axis_title, tickfont=dict(color="black"))
@@ -381,7 +403,7 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
                     fig.update_yaxes(tickformat=".2s", hoverformat=",.2f", gridcolor='rgba(200,200,200,0.2)', zeroline=True, zerolinecolor='rgba(0,0,0,0.2)', zerolinewidth=1, title=y_axis_title, tickfont=dict(color="black"))
                 else:
                     fig.update_yaxes(tickformat=",.2f", gridcolor='rgba(200,200,200,0.2)', zeroline=True, zerolinecolor='rgba(0,0,0,0.2)', zerolinewidth=1, tickfont=dict(color="black"))
-                
+
                 custom_hover_data = pd.DataFrame(index=df_processed.index)
                 x_hover_template = f"<b>{x_col}</b>: %{{customdata[0]}}" if x_col in currency_like_cols else f"<b>{x_col}</b>: %{{x:,.2f}}"
                 if x_col in currency_like_cols:
@@ -389,7 +411,7 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
 
                 y_hover_template = f"<b>{y_col}</b>: %{{customdata[1 if x_col in currency_like_cols else 0]}}" if y_col in currency_like_cols else f"<b>{y_col}</b>: %{{y:,.2f}}"
                 if y_col in currency_like_cols:
-                     custom_hover_data[y_col] = df_processed[y_col].apply(lambda val: format_aed_currency(val, for_chart_hover=True))
+                    custom_hover_data[y_col] = df_processed[y_col].apply(lambda val: format_aed_currency(val, for_chart_hover=True))
 
 
                 fig.update_traces(
@@ -442,7 +464,7 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
                     uniformtext_minsize=12, uniformtext_mode='hide', title_x=0.5,
                     font=label_font_settings, # General font for legend etc.
                     paper_bgcolor='white',
-                    legend=dict(bgcolor='rgba(255,255,255,0.8)', bordercolor='rgba(0,0,0,0.1)', borderwidth=1, font=dict(color="black")),
+                    legend=dict(bgcolor='rgba(255,255,255,0.8)', bordercolor='rgba(0,0,0,0.1)', borderwidth=1, font=dict(color="black")), # Legend text black
                     annotations=[dict(
                         text=f"Total:<br>{format_aed_currency(total, for_chart_axis_label=True) + ' AED' if value_col in currency_like_cols else f'{total:,.2f}'}",
                         showarrow=False, font=dict(size=14, color="black"), x=0.5, y=0.5 # Center text black
@@ -491,9 +513,7 @@ def create_visualization(df: pd.DataFrame, vis_type: str = "Table"):
     if st.session_state.insights:
         st.markdown("---")
         st.markdown("### 💡 Summary Insights")
-        st.markdown(st.session_state.insights, unsafe_allow_html=False) # Set to False if it's plain text
-               
-
+        st.markdown(st.session_state.insights, unsafe_allow_html=False)
     # Removed insight display from here, will be handled in main app tabs
 
 def process_query(query: str):
@@ -532,13 +552,18 @@ def process_query(query: str):
         return 0.0
 
     with st.spinner("Selector Agent: Checking if query is answerable..."):
-        is_answerable, need_decompose, time_taken = SelectorAgent.is_query_answerable(
-            query, st.session_state.db_schema_string
+        selector = st.session_state.selector_agent
+        is_answerable, need_decompose,reframed_query,time_taken = selector.is_query_answerable(
+            query=query,schema_string= st.session_state.db_schema_string
         )
+        
     status = "✅ Query is answerable" if is_answerable else "❌ Query is not answerable"
+    # st.write(selector.get_memory_context())
     st.session_state.processing_steps.append({
         "agent": "Selector Agent", "status": status,
-        "details": f"Need decomposer: {need_decompose}", "time_taken": time_taken
+        "details": f"Need decomposer: {need_decompose},\n reframed_query:{reframed_query}",
+        "reframed_query":reframed_query ,
+        "time_taken": time_taken
     })
     if not is_answerable:
         st.warning("Query cannot be answered with the current database schema.")
@@ -550,7 +575,7 @@ def process_query(query: str):
     if need_decompose:
         with st.spinner("Decomposer Agent: Breaking down query..."):
             decomposition, time_taken = DecomposerAgent.decompose_query(
-                query, st.session_state.db_schema_string
+                reframed_query, st.session_state.db_schema_string
             )
         st.session_state.processing_steps.append({
             "agent": "Decomposer Agent", "status": "✅ Query decomposed",
@@ -559,7 +584,7 @@ def process_query(query: str):
 
     with st.spinner("Refiner Agent: Generating SQL..."):
         sql_query, time_taken = RefinerAgent.generate_sql(
-            query, st.session_state.db_schema_string, decomposition
+            reframed_query, st.session_state.db_schema_string, decomposition
         )
     st.session_state.sql_query = sql_query
     st.session_state.processing_steps.append({

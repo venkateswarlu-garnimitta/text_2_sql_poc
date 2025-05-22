@@ -3,7 +3,6 @@ import time
 import openai
 import json
 import re
-print(os.getenv("OPENAI_API_KEY"))
 class SelectorAgent:
     """
     Agent responsible for checking if a user query is answerable based on the schema.
